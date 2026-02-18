@@ -477,12 +477,12 @@ local: check_docker
 	@echo "Setting up local development with Deepgram transcription..."
 	@$(MAKE) force-env TRANSCRIPTION=deepgram
 	@$(MAKE) build-bot-image
-	@docker compose -f docker-compose.yml -f docker-compose.local-db.yml -f docker-compose.local.yml build
+	@docker compose -f docker-compose.yml -f docker-compose.local-db.yml -f docker-compose.local.yml --profile deepgram build
 	@if ! docker network ls | grep -q "vexa-network"; then \
 		echo "Creating vexa-network..."; \
 		docker network create vexa-network || true; \
 	fi
-	@docker compose -f docker-compose.yml -f docker-compose.local-db.yml -f docker-compose.local.yml up -d
+	@docker compose -f docker-compose.yml -f docker-compose.local-db.yml -f docker-compose.local.yml --profile deepgram up -d
 	@sleep 3
 	@echo ""
 	@echo "============================================================================"
