@@ -1,4 +1,4 @@
-.PHONY: all setup submodules env force-env setup-transcription-service-env build-bot-image build build-transcription-service up up-transcription-service down down-transcription-service ps logs test test-api test-setup migrate makemigrations init-db stamp-db migrate-or-init migration-status
+.PHONY: all setup submodules env force-env setup-transcription-service-env build-bot-image build build-transcription-service up up-transcription-service down down-transcription-service ps logs test test-api test-setup migrate makemigrations init-db stamp-db migrate-or-init migration-status local
 
 # Default target: Sets up everything and starts the services
 all: setup-env build up migrate-or-init test
@@ -80,8 +80,10 @@ define create_env_file
 	elif [ "$$TRANSCRIPTION_TYPE" = "remote" ]; then \
 		ENV_FILE=env-example.remote; \
 		URL=https://transcription-service.dev.vexa.ai/v1/audio/transcriptions; \
+	elif [ "$$TRANSCRIPTION_TYPE" = "deepgram" ]; then \
+		ENV_FILE=env-example.deepgram; \
 	else \
-		echo "Error: Invalid TRANSCRIPTION_TYPE=$$TRANSCRIPTION_TYPE. Must be 'cpu', 'gpu', or 'remote'"; \
+		echo "Error: Invalid TRANSCRIPTION_TYPE=$$TRANSCRIPTION_TYPE. Must be 'cpu', 'gpu', 'remote', or 'deepgram'"; \
 		exit 1; \
 	fi; \
 	if [ ! -f $$ENV_FILE ]; then \
@@ -166,10 +168,10 @@ env: setup-transcription-service-env
 ifndef TRANSCRIPTION
 	$(eval TRANSCRIPTION := remote)
 endif
-	@if [ "$(TRANSCRIPTION)" = "cpu" ] || [ "$(TRANSCRIPTION)" = "gpu" ] || [ "$(TRANSCRIPTION)" = "remote" ]; then \
+	@if [ "$(TRANSCRIPTION)" = "cpu" ] || [ "$(TRANSCRIPTION)" = "gpu" ] || [ "$(TRANSCRIPTION)" = "remote" ] || [ "$(TRANSCRIPTION)" = "deepgram" ]; then \
 		$(call create_env_file,$(TRANSCRIPTION),); \
 	else \
-		echo "Error: TRANSCRIPTION must be 'cpu', 'gpu', or 'remote'"; \
+		echo "Error: TRANSCRIPTION must be 'cpu', 'gpu', 'remote', or 'deepgram'"; \
 		exit 1; \
 	fi
 
@@ -178,10 +180,10 @@ force-env: setup-transcription-service-env
 ifndef TRANSCRIPTION
 	$(eval TRANSCRIPTION := remote)
 endif
-	@if [ "$(TRANSCRIPTION)" = "cpu" ] || [ "$(TRANSCRIPTION)" = "gpu" ] || [ "$(TRANSCRIPTION)" = "remote" ]; then \
+	@if [ "$(TRANSCRIPTION)" = "cpu" ] || [ "$(TRANSCRIPTION)" = "gpu" ] || [ "$(TRANSCRIPTION)" = "remote" ] || [ "$(TRANSCRIPTION)" = "deepgram" ]; then \
 		$(call create_env_file,$(TRANSCRIPTION),force); \
 	else \
-		echo "Error: TRANSCRIPTION must be 'cpu', 'gpu', or 'remote'"; \
+		echo "Error: TRANSCRIPTION must be 'cpu', 'gpu', 'remote', or 'deepgram'"; \
 		exit 1; \
 	fi
 
@@ -215,7 +217,12 @@ build: check_docker build-bot-image build-transcription-service
 	if [ "$$REMOTE_DB" != "true" ]; then \
 		COMPOSE_FILES="$$COMPOSE_FILES -f docker-compose.local-db.yml"; \
 	fi; \
-	docker compose $$COMPOSE_FILES --profile remote build
+	TRANSCRIPTION_TYPE=$$(grep -E '^[[:space:]]*DEVICE_TYPE=' .env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' || echo "remote"); \
+	if [ "$$TRANSCRIPTION_TYPE" = "deepgram" ]; then \
+		docker compose $$COMPOSE_FILES --profile deepgram build; \
+	else \
+		docker compose $$COMPOSE_FILES --profile remote build; \
+	fi
 
 # Start transcription-service based on TRANSCRIPTION
 up-transcription-service: check_docker
@@ -246,7 +253,7 @@ up: check_docker
 		echo "Creating vexa-network..."; \
 		docker network create vexa-network || true; \
 	fi; \
-	docker compose $$COMPOSE_FILES --profile remote up -d; \
+	docker compose $$COMPOSE_FILES --profile remote --profile deepgram up -d; \
 	sleep 3; \
 	if [ "$$REMOTE_DB" = "true" ]; then \
 		if docker compose $$COMPOSE_FILES ps -q postgres 2>/dev/null | grep -q .; then \
@@ -464,3 +471,29 @@ migration-status: check_docker
 	fi
 	@docker compose $$COMPOSE_FILES exec -T transcription-collector alembic -c /app/alembic.ini current
 	@docker compose $$COMPOSE_FILES exec -T transcription-collector alembic -c /app/alembic.ini history --verbose
+
+# Single-command local development with Deepgram transcription
+local: check_docker
+	@echo "Setting up local development with Deepgram transcription..."
+	@$(MAKE) force-env TRANSCRIPTION=deepgram
+	@$(MAKE) build-bot-image
+	@docker compose -f docker-compose.yml -f docker-compose.local-db.yml -f docker-compose.local.yml --profile deepgram build
+	@if ! docker network ls | grep -q "vexa-network"; then \
+		echo "Creating vexa-network..."; \
+		docker network create vexa-network || true; \
+	fi
+	@docker compose -f docker-compose.yml -f docker-compose.local-db.yml -f docker-compose.local.yml --profile deepgram up -d
+	@sleep 3
+	@echo ""
+	@echo "============================================================================"
+	@echo "Local development stack started with Deepgram transcription"
+	@echo "============================================================================"
+	@echo ""
+	@echo "Services:"
+	@echo "  API Gateway:              http://localhost:$${API_GATEWAY_HOST_PORT:-8056}/docs"
+	@echo "  Admin API:                http://localhost:$${ADMIN_API_HOST_PORT:-8057}/docs"
+	@echo "  Transcription Collector:  http://localhost:$${TRANSCRIPTION_COLLECTOR_HOST_PORT:-8123}"
+	@echo "  PostgreSQL:               localhost:$${POSTGRES_HOST_PORT:-5438}"
+	@echo ""
+	@echo "IMPORTANT: Set DEEPGRAM_API_KEY in .env with your Deepgram API key"
+	@echo "============================================================================"

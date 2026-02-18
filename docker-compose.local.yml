@@ -1,0 +1,20 @@
+# docker-compose.local.yml
+#
+# Single-command local dev override.
+# Usage:
+#   make local
+# Or manually:
+#   docker compose -f docker-compose.yml -f docker-compose.local-db.yml -f docker-compose.local.yml up -d
+#
+# This file activates the deepgram-transcriber without needing --profile deepgram,
+# and overrides the bot-manager's WHISPER_LIVE_URL to point at it.
+
+services:
+  # Activate deepgram-transcriber by removing the profile constraint
+  deepgram-transcriber:
+    profiles: []  # Override: always start in local mode
+
+  # Point bot-manager at deepgram-transcriber
+  bot-manager:
+    environment:
+      - WHISPER_LIVE_URL=ws://deepgram-transcriber:9090/ws
